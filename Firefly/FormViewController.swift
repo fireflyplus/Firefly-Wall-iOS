@@ -1,6 +1,8 @@
 import UIKit
 import WebKit
 import CommonCrypto
+import AppTrackingTransparency
+import AdSupport
 
 class FormViewController: UIViewController {
     private var wkWebView: WKWebView!
@@ -28,7 +30,7 @@ class FormViewController: UIViewController {
     }
     
     private func loadPage() {
-        let link = "https://gifts.fireflyplus.com/firefly-wall/"
+        let link = "https://gifts.fireflyplus.com/firefly-wall/list"
         let url = URL(string: link)
         self.wkWebView.load(URLRequest(url: url!))
         
@@ -56,54 +58,100 @@ class FormViewController: UIViewController {
 }
 
 extension FormViewController: WKScriptMessageHandler{
+    
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         print(message.name)
         print(message.body)
         
         if message.name == "initUser" { // 用户初始化
-            let appId = "T801001"
-            let key = "05e98782776b44acb34d7f59d417f89b"
-            let userId = "8eb7fbb7-90db-438e-b4a9-5be03a224534"
-            let countryCode = "US"
-            let language = "en"
-            let placementId = "T801001G05"
-            let extra = ""
-            let time = Int(Date().timeIntervalSince1970 * 1000)
+            let group = DispatchGroup()
+            
+            var userAgent = ""
+            var ip = ""
+            var idfa = ""
+            
+            // 获取 UA
+            group.enter()
+            self.wkWebView.evaluateJavaScript("navigator.userAgent") { result, error in
+                if let ua = result as? String {
+                    userAgent = ua
+                }
+                group.leave()
+            }
+
+            // 获取 IP
+            group.enter()
+            URLSession.shared.dataTask(with: URL(string: "https://api.ipify.org?format=text")!) { data, _, _ in
+                if let data = data {
+                    ip = String(data: data, encoding: .utf8) ?? ""
+                }
+                group.leave()
+            }.resume()
+
+            // 获取 IDFA
+//            if #available(iOS 14, *) {
+//                group.enter()
+//                ATTrackingManager.requestTrackingAuthorization { status in
+//                    if status == .authorized {
+//                        idfa = ASIdentifierManager.shared().advertisingIdentifier.uuidString
+//                    }
+//                    group.leave()
+//                }
+//            } else {
+//                group.enter()
+//                idfa = ASIdentifierManager.shared().advertisingIdentifier.uuidString
+//                group.leave()
+//            }
     
-            let channelString = "appId=" + appId
-            let timeString = "time=" + String(time)
-            let userIdString = "userId=" + userId
-            let countryCodeString = "countryCode=" + countryCode
-            let languageString = "language=" + language
-            let taskGroupString = "placementId=" + placementId
-            let extraString = "extra=" + extra
-            let stringToSign = channelString + "&" + countryCodeString + "&" + extraString + "&" + languageString + "&" + taskGroupString + "&" + timeString + "&" + userIdString + key // 生成待签名字符串
-            print(stringToSign)
-            
-            let sign = stringToSign.md5
-            print(sign)
-            var resp = [String: Any]()
-            resp["appId"] = appId
-            resp["userId"] = userId
-            resp["countryCode"] = "US"
-            resp["language"] = "en"
-            resp["time"] = time
-            resp["sign"] = sign
-            resp["extra"] = extra
-            resp["placementId"] = placementId
-            print(resp)
-            
-            do {
-                let respData = try JSONSerialization.data(withJSONObject: resp)
-                let respString = String(data: respData, encoding: String.Encoding.utf8) ?? ""
-                print(respString)
+            group.notify(queue: .main) {
+                let appId = "T801001"
+                let key = "05e98782776b44acb34d7f59d417f89b"
+                let userId = "8eb7fbb7-90db-438e-b4a9-5be03a224534"
+                let countryCode = "US"
+                let language = "en"
+                let placementId = "T801001G05"
+                let extra = ""
+                let iosVersion = UIDevice.current.systemVersion
+                let time = Int(Date().timeIntervalSince1970 * 1000)
                 
-                let returnDataString = "window.iosInitUserResponse(" + respString + ")"
-                print(returnDataString)
+                let params: [(String, String)] = [
+                    ("appId", appId),
+                    ("countryCode", countryCode),
+                    ("extra", extra),
+                    ("idfa", idfa),
+                    ("iosVersion", iosVersion),
+                    ("ip", ip),
+                    ("language", language),
+                    ("placementId", placementId),
+                    ("time", String(time)),
+                    ("userAgent", userAgent),
+                    ("userId", userId),
+                ]
                 
-                self.wkWebView.evaluateJavaScript(returnDataString, completionHandler: nil)
-            } catch let myJSONError {
-                print(myJSONError)
+
+                let paramString = params.map { "\($0.0)=\($0.1)" }.joined(separator: "&")
+                let stringToSign = paramString + key
+                print(stringToSign)
+                
+                let sign = stringToSign.md5
+                print(sign)
+                
+                var resp = Dictionary(uniqueKeysWithValues: params)
+                resp["sign"] = sign
+                print(resp)
+                
+                do {
+                    let respData = try JSONSerialization.data(withJSONObject: resp)
+                    let respString = String(data: respData, encoding: String.Encoding.utf8) ?? ""
+                    print(respString)
+                    
+                    let returnDataString = "window.iosInitUserResponse(" + respString + ")"
+                    print(returnDataString)
+                    
+                    self.wkWebView.evaluateJavaScript(returnDataString, completionHandler: nil)
+                } catch let myJSONError {
+                    print(myJSONError)
+                }
             }
         }
         
